@@ -33,21 +33,40 @@ class FSCCrawler {
         $textContent = strip_tags($htmlContent);
         $textContent = str_replace(["\r\n", "\r"], "\n", $textContent);
         
-        // Extract each field - stop at first match of any line break or next field
-        $allFieldNames = array_keys($fields);
-        $nextFieldPattern = '(?=' . implode('|', array_map(function($f) { return preg_quote($f, '/'); }, $allFieldNames)) . '|事實|理由|法令依據|繳款方式|注意事項|\n\n)';
-        
         foreach ($fields as $fieldName => &$value) {
+            // Define next field patterns specific to each field
+            $nextFieldStops = [
+                '發文日期' => '發文字號|速別|密等|附件|相對人|受處分人|營利事業統一編號|主旨|事實',
+                '發文字號' => '速別|密等|附件|相對人|受處分人|營利事業統一編號|主旨|事實',
+                '受處分人' => '營利事業統一編號|統一號碼|地址|代表人|主旨|事實',
+                '受處分人姓名或名稱' => '營利事業統一編號|統一號碼|地址|代表人|主旨|事實',
+                '受處分人名稱' => '營利事業統一編號|統一號碼|地址|代表人|主旨|事實',
+                '相對人' => '公司代表人|出生年月日|性別|身分證|地址|主旨|事實',
+                '受裁罰之對象' => '營利事業統一編號|統一號碼|地址|代表人|主旨|事實',
+                '營利事業統一編號' => '地址|代表人|主旨|事實',
+                '統一號碼' => '地址|代表人|主旨|事實',
+                '代表人或管理人姓名' => '地址|身分證|主旨|事實',
+                '地址' => '代表人|主旨|事實',
+                '裁罰時間' => '受處分人|營利事業統一編號|主旨|事實',
+                '主旨' => '事實|理由|法令依據'
+            ];
+            
+            $stopPattern = isset($nextFieldStops[$fieldName]) ? $nextFieldStops[$fieldName] : '事實|理由|法令依據|繳款方式|注意事項';
+            
             // More precise patterns to extract only the value
             $patterns = [
-                '/' . preg_quote($fieldName, '/') . '[：:]\s*([^：\n]+?)' . $nextFieldPattern . '/su',
-                '/' . preg_quote($fieldName, '/') . '[：:]\s*([^：\n]+?)(?=\n|$)/u'
+                '/' . preg_quote($fieldName, '/') . '[：:]\s*([^：\n]*?)(?=' . $stopPattern . '|$)/u',
+                '/' . preg_quote($fieldName, '/') . '[：:]\s*([^\n]*?)(?=\n|$)/u'
             ];
             
             foreach ($patterns as $pattern) {
                 if (preg_match($pattern, $textContent, $matches)) {
                     $value = trim($matches[1]);
                     $value = rtrim($value, '。');
+                    
+                    // Clean up text that got captured
+                    $value = preg_replace('/(' . $stopPattern . ').*$/u', '', $value);
+                    $value = trim($value);
                     
                     // Handle special cases
                     if (($fieldName === '營利事業統一編號' || $fieldName === '統一號碼') && $value === '略') {
@@ -59,7 +78,13 @@ class FSCCrawler {
                     if ($fieldName === '代表人或管理人姓名' && $value === '略') {
                         $value = null;
                     }
-                    break;
+                    if ($fieldName === '相對人' && $value === '略') {
+                        $value = null;
+                    }
+                    
+                    if (!empty($value)) {
+                        break;
+                    }
                 }
             }
         }
@@ -88,10 +113,13 @@ class FSCCrawler {
         $penaltyPatterns = [
             '/處[以予]\s*新臺幣\s*([0-9,]+)\s*萬元/u',
             '/罰鍰新臺幣[（(]?下同[）)]?\s*([0-9,]+)\s*萬元/u',
+            '/罰鍰新臺幣\s*([0-9,]+)\s*萬元/u',
             '/罰鍰\s*([0-9,]+)\s*萬元/u',
             '/核處新臺幣[（(]?下同[）)]?\s*([0-9,]+)\s*萬元/u',
             '/核處罰鍰新臺幣[（(]?下同[）)]?\s*([0-9,]+)\s*萬元/u',
-            '/新臺幣\s*([0-9,]+)\s*萬元\s*罰鍰/u'
+            '/新臺幣\s*([0-9,]+)\s*萬元\s*罰鍰/u',
+            '/核處\s*([0-9,]+)\s*萬元\s*罰鍰/u',
+            '/核處\s*新臺幣[（(]?以下同[）)]?\s*([0-9,]+)\s*萬元\s*罰鍰/u'
         ];
         
         foreach ($penaltyPatterns as $pattern) {
